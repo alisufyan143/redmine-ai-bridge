@@ -19,24 +19,20 @@ class RubyASTExtractor:
         self.language: tree_sitter.Language = tree_sitter.Language(tree_sitter_ruby.language())
         self.parser: tree_sitter.Parser = tree_sitter.Parser(self.language)
 
-    def extract_entities(self, source_code: str, max_depth: int = 20) -> dict[str, list[str]]:
-        """Parses Ruby source code and extracts classes, methods, and requires.
-
-        Guards against syntax errors and deep recursion.
-        """
+    def extract_entities(self, code: str, max_depth: int = 100) -> dict[str, list[str]]:
+        """Parses Ruby code and extracts classes, methods, and require dependencies."""
         entities: dict[str, list[str]] = {
             "classes": [],
             "methods": [],
             "requires": [],
         }
 
-        if not source_code or not source_code.strip():
+        if not code or not code.strip():
             return entities
 
-        source_bytes: bytes = source_code.encode("utf-8", errors="replace")
-
+        code_bytes = code.encode("utf-8")
         try:
-            tree = self.parser.parse(source_bytes)
+            tree = self.parser.parse(code_bytes)
         except Exception as exc:
             logger.error(
                 "Tree-sitter parser failed unexpectedly.",
@@ -58,17 +54,18 @@ class RubyASTExtractor:
     ) -> None:
         """Recursively traverses AST nodes up to max_depth, recovering gracefully from ERROR nodes."""
         if current_depth > max_depth:
-            logger.warning(
-                f"AST traversal reached maximum recursion depth limit ({max_depth}); skipping deeper nodes.",
-                extra={
-                    "extra_payload": {
-                        "event": "MAX_RECURSION_DEPTH_EXCEEDED",
-                        "current_depth": current_depth,
-                        "max_depth": max_depth,
-                        "node_type": getattr(node, "type", "unknown"),
-                    }
-                },
-            )
+            if current_depth == max_depth + 1:
+                logger.warning(
+                    f"AST traversal reached maximum recursion depth limit ({max_depth}); skipping deeper nodes.",
+                    extra={
+                        "extra_payload": {
+                            "event": "MAX_RECURSION_DEPTH_EXCEEDED",
+                            "current_depth": current_depth,
+                            "max_depth": max_depth,
+                            "node_type": getattr(node, "type", "unknown"),
+                        }
+                    },
+                )
             return
 
         node_type: str = getattr(node, "type", "")

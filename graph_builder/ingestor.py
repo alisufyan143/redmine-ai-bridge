@@ -14,6 +14,7 @@ from typing import Any, Generator, Sequence, TypeVar
 import uuid
 
 from google import genai
+from google.genai import types
 import pinecone
 from supabase import AsyncClient, create_async_client
 
@@ -35,9 +36,11 @@ class GraphIngestor:
         supabase_url: str = "https://mock.supabase.co",
         supabase_key: str = "mock_key",
         embedding_model: str = "gemini-embedding-001",
+        output_dim: int = 3072,
         supabase_client: AsyncClient | None = None,
         pinecone_client: Any | None = None,
-        genai_client: genai.Client | None = None,
+        pinecone_index: Any | None = None,
+        genai_client: Any | None = None,
     ) -> None:
         self.google_api_key: str = google_api_key
         self.pinecone_api_key: str = pinecone_api_key
@@ -45,13 +48,19 @@ class GraphIngestor:
         self.supabase_url: str = supabase_url
         self.supabase_key: str = supabase_key
         self.embedding_model: str = embedding_model
+        self.output_dim: int = output_dim
 
         # Google GenAI SDK Client (new google.genai)
         self.genai_client = genai_client or genai.Client(api_key=google_api_key)
         
-        # Pinecone Client
-        self.pc = pinecone_client or pinecone.Pinecone(api_key=pinecone_api_key)
-        self.pinecone_index = getattr(self.pc, "Index", lambda name: None)(pinecone_index_name)
+        # Pinecone Client & Index
+        self.pc = pinecone_client or (pinecone.Pinecone(api_key=pinecone_api_key) if pinecone_api_key != "mock_key" else None)
+        if pinecone_index is not None:
+            self.pinecone_index = pinecone_index
+        elif self.pc is not None:
+            self.pinecone_index = getattr(self.pc, "Index", lambda name: None)(pinecone_index_name)
+        else:
+            self.pinecone_index = None
         
         # Supabase AsyncClient
         self._supabase_client: AsyncClient | None = supabase_client
@@ -83,25 +92,42 @@ class GraphIngestor:
         upserted_vectors = 0
         inserted_edges = 0
 
-        # 1. Generate embeddings using new Google GenAI SDK (client.aio.models.embed_content / client.models.embed_content)
+        # 1. Generate embeddings using new Google GenAI SDK
         if nodes:
             node_texts = [
                 str(node.get("content") or node.get("name") or "") for node in nodes
             ]
 
             embeddings: list[list[float]] = []
-            if hasattr(self.genai_client, "aio") and hasattr(self.genai_client.aio, "models"):
-                embed_resp = await self.genai_client.aio.models.embed_content(
-                    model=self.embedding_model,
-                    contents=node_texts,
+            embed_resp = None
+            config = types.EmbedContentConfig(output_dimensionality=self.output_dim)
+
+            try:
+                if hasattr(self.genai_client, "aio") and hasattr(self.genai_client.aio, "models"):
+                    embed_call = self.genai_client.aio.models.embed_content(
+                        model=self.embedding_model,
+                        contents=node_texts,
+                        config=config,
+                    )
+                elif hasattr(self.genai_client, "models") and hasattr(self.genai_client.models, "embed_content"):
+                    embed_call = self.genai_client.models.embed_content(
+                        model=self.embedding_model,
+                        contents=node_texts,
+                        config=config,
+                    )
+                else:
+                    embed_call = None
+
+                if embed_call is not None:
+                    if asyncio.iscoroutine(embed_call):
+                        embed_resp = await embed_call
+                    else:
+                        embed_resp = embed_call
+            except Exception as embed_err:
+                logger.warning(
+                    f"Batch embedding generation warning: {embed_err}",
+                    extra={"extra_payload": {"error": str(embed_err)}},
                 )
-            elif hasattr(self.genai_client, "models") and hasattr(self.genai_client.models, "embed_content"):
-                embed_resp = self.genai_client.models.embed_content(
-                    model=self.embedding_model,
-                    contents=node_texts,
-                )
-            else:
-                embed_resp = None
 
             if embed_resp is not None:
                 if hasattr(embed_resp, "embeddings") and embed_resp.embeddings:
@@ -117,7 +143,7 @@ class GraphIngestor:
 
             # Default fallback for missing or mock vectors
             while len(embeddings) < len(nodes):
-                embeddings.append([0.0] * 768)
+                embeddings.append([0.0] * self.output_dim)
 
             vectors_to_upsert: list[dict[str, Any]] = []
             for node, embedding in zip(nodes, embeddings):
@@ -141,6 +167,7 @@ class GraphIngestor:
 
             upserted_vectors = len(vectors_to_upsert)
             embedded_count = len(node_texts)
+
 
         # 2. Insert relational edges asynchronously into Supabase without blocking the event loop
         if edges:

@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import logging
 from typing import Any
 from google import genai
+from google.genai import types
 import networkx as nx
 import pinecone
 from supabase import AsyncClient, create_async_client
@@ -32,11 +33,13 @@ class GraphWalkerAgent:
         supabase_url: str = "https://mock.supabase.co",
         supabase_key: str = "mock_key",
         embedding_model: str = "gemini-embedding-001",
+        output_dim: int = 3072,
         genai_client: Any | None = None,
         pinecone_index: Any | None = None,
         supabase_client: AsyncClient | None = None,
     ) -> None:
         self.embedding_model: str = embedding_model
+        self.output_dim: int = output_dim
         self.supabase_url: str = supabase_url
         self.supabase_key: str = supabase_key
 
@@ -84,18 +87,37 @@ class GraphWalkerAgent:
             extra={"extra_payload": {"ticket_id": getattr(triage, "ticket_id", "unknown")}},
         )
 
-        vector: list[float] = [0.0] * 768
+        vector: list[float] = [0.0] * self.output_dim
         embed_resp = None
-        if hasattr(self.genai_client, "aio") and hasattr(self.genai_client.aio, "models"):
-            embed_resp = await self.genai_client.aio.models.embed_content(
-                model=self.embedding_model,
-                contents=[query_str],
+        config = types.EmbedContentConfig(output_dimensionality=self.output_dim)
+
+        try:
+            if hasattr(self.genai_client, "aio") and hasattr(self.genai_client.aio, "models"):
+                embed_call = self.genai_client.aio.models.embed_content(
+                    model=self.embedding_model,
+                    contents=[query_str],
+                    config=config,
+                )
+            elif hasattr(self.genai_client, "models") and hasattr(self.genai_client.models, "embed_content"):
+                embed_call = self.genai_client.models.embed_content(
+                    model=self.embedding_model,
+                    contents=[query_str],
+                    config=config,
+                )
+            else:
+                embed_call = None
+
+            if embed_call is not None:
+                if asyncio.iscoroutine(embed_call):
+                    embed_resp = await embed_call
+                else:
+                    embed_resp = embed_call
+        except Exception as embed_err:
+            logger.warning(
+                f"Query embedding generation warning: {embed_err}",
+                extra={"extra_payload": {"error": str(embed_err)}},
             )
-        elif hasattr(self.genai_client, "models") and hasattr(self.genai_client.models, "embed_content"):
-            embed_resp = self.genai_client.models.embed_content(
-                model=self.embedding_model,
-                contents=[query_str],
-            )
+
 
         if embed_resp is not None:
             if hasattr(embed_resp, "embeddings") and embed_resp.embeddings:

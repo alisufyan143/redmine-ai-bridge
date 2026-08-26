@@ -12,3 +12,7 @@ __pycache__/
 # IDE / system files
 .DS_Store
 Thumbs.db
+
+# Cloned target repositories
+target_repo/
+

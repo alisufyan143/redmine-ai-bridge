@@ -30,18 +30,25 @@ class AIBridgeOrchestrator:
     def __init__(
         self,
         redmine_client: RedmineClient,
-        visual_triage_agent: VisualTriageAgent,
-        graph_walker_agent: GraphWalkerAgent,
-        patch_engineer_agent: PatchEngineerAgent,
-        sandbox_validator: RubySandboxValidator,
-        security_gate_agent: SecurityGateAgent,
+        visual_triage_agent: VisualTriageAgent | None = None,
+        graph_walker_agent: GraphWalkerAgent | None = None,
+        patch_engineer_agent: PatchEngineerAgent | None = None,
+        sandbox_validator: RubySandboxValidator | None = None,
+        security_gate_agent: SecurityGateAgent | None = None,
+        *,
+        visual_triage: VisualTriageAgent | None = None,
+        graph_walker: GraphWalkerAgent | None = None,
+        patch_engineer: PatchEngineerAgent | None = None,
+        ruby_validator: RubySandboxValidator | None = None,
+        security_gate: SecurityGateAgent | None = None,
     ) -> None:
         self.redmine_client: RedmineClient = redmine_client
-        self.visual_triage_agent: VisualTriageAgent = visual_triage_agent
-        self.graph_walker_agent: GraphWalkerAgent = graph_walker_agent
-        self.patch_engineer_agent: PatchEngineerAgent = patch_engineer_agent
-        self.sandbox_validator: RubySandboxValidator = sandbox_validator
-        self.security_gate_agent: SecurityGateAgent = security_gate_agent
+        self.visual_triage_agent: VisualTriageAgent = visual_triage_agent or visual_triage  # type: ignore[assignment]
+        self.graph_walker_agent: GraphWalkerAgent = graph_walker_agent or graph_walker  # type: ignore[assignment]
+        self.patch_engineer_agent: PatchEngineerAgent = patch_engineer_agent or patch_engineer  # type: ignore[assignment]
+        self.sandbox_validator: RubySandboxValidator = sandbox_validator or ruby_validator  # type: ignore[assignment]
+        self.security_gate_agent: SecurityGateAgent = security_gate_agent or security_gate  # type: ignore[assignment]
+
 
     async def process_ticket(self, issue_id: int) -> bool:
         """Executes the full automated diagnostic and remediation pipeline for a Redmine issue."""
